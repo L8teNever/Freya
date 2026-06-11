@@ -19,8 +19,47 @@ class FreyaApp {
         // Bind UI Elements
         this.initializeUIElements();
         
+        // Modal-as-history stack (back button closes pop-ups)
+        this._modalStack = [];
+        this._suppressPop = false;
+
         // Listeners for routing
-        window.addEventListener('popstate', (e) => this.handleRouting());
+        window.addEventListener('popstate', (e) => this.onPopState(e));
+    }
+
+    // --- Modal routing: opening a pop-up pushes a history entry so the
+    //     phone/browser back button closes it instead of leaving the page. ---
+    onPopState(e) {
+        if (this._suppressPop) { this._suppressPop = false; return; }
+        if (this._modalStack.length) {
+            const id = this._modalStack.pop();
+            const el = document.getElementById(id);
+            if (el) el.classList.remove('active');
+            return;
+        }
+        this.handleRouting();
+    }
+
+    openModal(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.add('active');
+        this._modalStack.push(id);
+        history.pushState({ modalId: id }, '', window.location.pathname + window.location.search + '#' + id);
+    }
+
+    dismissModal(id) {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('active');
+        if (this._modalStack.length && this._modalStack[this._modalStack.length - 1] === id) {
+            this._modalStack.pop();
+            if (history.state && history.state.modalId === id) {
+                this._suppressPop = true;
+                history.back();
+            }
+        } else {
+            this._modalStack = this._modalStack.filter(m => m !== id);
+        }
     }
 
     initializeUIElements() {
@@ -310,7 +349,6 @@ class FreyaApp {
 
     // --- Nickname Modal ---
     showNicknameModal(isCancelable) {
-        const modal = document.getElementById('nickname-modal');
         const cancelBtn = document.getElementById('nickname-cancel-btn');
         const input = document.getElementById('nickname-input');
         
@@ -323,12 +361,12 @@ class FreyaApp {
             cancelBtn.style.display = 'none';
         }
         
-        modal.classList.add('active');
+        this.openModal('nickname-modal');
         input.focus();
     }
 
     closeNicknameModal() {
-        document.getElementById('nickname-modal').classList.remove('active');
+        this.dismissModal('nickname-modal');
     }
 
     submitNickname() {
@@ -606,7 +644,6 @@ class FreyaApp {
     // --- Challenge System ---
     openChallengeSendModal(gameId) {
         this.selectedGameForChallenge = gameId;
-        const modal = document.getElementById('challenge-send-modal');
         const list = document.getElementById('challenge-player-select-list');
         list.innerHTML = '';
 
@@ -629,11 +666,11 @@ class FreyaApp {
             });
         }
 
-        modal.classList.add('active');
+        this.openModal('challenge-send-modal');
     }
 
     closeChallengeSendModal() {
-        document.getElementById('challenge-send-modal').classList.remove('active');
+        this.dismissModal('challenge-send-modal');
         this.selectedGameForChallenge = null;
     }
 
@@ -850,7 +887,6 @@ class FreyaApp {
         if (!gState || !gState.players) return;
         const others = gState.players.filter(p => p.session_id !== this.sessionId);
         if (others.length === 0) { this.showToast('Niemand zum Anfechten da.'); return; }
-        const modal = document.getElementById('dispute-picker-modal');
         const list = document.getElementById('dispute-picker-list');
         list.innerHTML = '';
         others.forEach(p => {
@@ -861,17 +897,17 @@ class FreyaApp {
             btn.className = 'btn btn-primary';
             btn.textContent = 'Anfechten';
             btn.addEventListener('click', () => {
-                document.getElementById('dispute-picker-modal').classList.remove('active');
+                this.dismissModal('dispute-picker-modal');
                 this.startDispute(p.session_id, p.nickname);
             });
             item.appendChild(btn);
             list.appendChild(item);
         });
-        modal.classList.add('active');
+        this.openModal('dispute-picker-modal');
     }
 
     closeDisputePicker() {
-        document.getElementById('dispute-picker-modal').classList.remove('active');
+        this.dismissModal('dispute-picker-modal');
     }
 
     sendDisputeAction(action) {
@@ -949,15 +985,14 @@ class FreyaApp {
 
     // --- Settings & Schulmodus ---
     openSettings() {
-        const modal = document.getElementById('settings-modal');
         document.getElementById('settings-name-input').value = this.nickname || '';
         document.getElementById('settings-school-toggle').checked = (localStorage.getItem('freya_school_mode') === 'true');
         document.getElementById('settings-mute-toggle').checked = (localStorage.getItem('freya_muted') === 'true');
-        modal.classList.add('active');
+        this.openModal('settings-modal');
     }
 
     closeSettings() {
-        document.getElementById('settings-modal').classList.remove('active');
+        this.dismissModal('settings-modal');
     }
 
     saveSettings() {
