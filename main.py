@@ -20,6 +20,7 @@ async def get_group_info(group_id: str):
     
     return {
         "exists": True,
+        "name": room.name,
         "players": [
             {
                 "nickname": p["nickname"],

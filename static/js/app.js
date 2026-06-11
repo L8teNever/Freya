@@ -177,10 +177,11 @@ class FreyaApp {
                         item.className = 'recent-group-item';
                         
                         const membersStr = data.players.map(p => p.nickname).join(', ') || 'Keine Mitglieder';
-                        
+                        const groupName = data.name || 'Gruppe';
+
                         item.innerHTML = `
                             <div class="recent-group-info">
-                                <span class="recent-group-id">${gid}</span>
+                                <span class="recent-group-id">${groupName}</span>
                                 <span class="recent-group-players">${membersStr}</span>
                             </div>
                             <div style="display: flex; gap: 8px;">
@@ -236,7 +237,8 @@ class FreyaApp {
         navGroupBtn.classList.add('active');
         bottomGroupBtn.classList.add('active');
 
-        document.getElementById('page-title').textContent = `Gruppe: ${groupId}`;
+        // Show the friendly name (filled from state); never the long id
+        document.getElementById('page-title').textContent = this._groupName || 'Gruppe';
         document.getElementById('mobile-back-btn').style.display = 'flex';
 
         this.showScreen('screen-group');
@@ -446,6 +448,12 @@ class FreyaApp {
         const sig = JSON.stringify(state);
         if (sig === this._lastStateSig) return;
         this._lastStateSig = sig;
+
+        // Friendly group name everywhere (never the long id)
+        if (state.group_name) {
+            this._groupName = state.group_name;
+            document.getElementById('page-title').textContent = state.group_name;
+        }
 
         // 1. Members list + alone banner (only when membership changed)
         const playersSig = JSON.stringify(state.players.map(p => [p.session_id, p.nickname, p.is_active]));

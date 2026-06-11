@@ -384,8 +384,7 @@ body {
 }
 
 .recent-group-id {
-    font-family: monospace;
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--primary);
 }

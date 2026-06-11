@@ -1,13 +1,35 @@
 import json
 import uuid
+import hashlib
 from typing import Dict, Set, Optional, Any, List
 from fastapi import WebSocket
 from app.games.catalog import GAMES_CATALOG, get_game_class
 from app.games.base import BaseGame
 
+# Friendly, short, deterministic group names derived from the (long) group id.
+# Everyone computes the same name from the same id — no extra storage needed.
+_NAME_ADJ = [
+    "Blauer", "Roter", "Grüner", "Goldener", "Wilder", "Flinker", "Mutiger",
+    "Schlauer", "Stiller", "Heller", "Kühner", "Frecher", "Sanfter", "Starker",
+    "Schneller", "Weiser",
+]
+_NAME_NOUN = [
+    "Fuchs", "Tiger", "Adler", "Wolf", "Bär", "Luchs", "Falke", "Hirsch",
+    "Otter", "Dachs", "Rabe", "Igel", "Biber", "Reh", "Uhu", "Wal",
+]
+
+
+def friendly_group_name(group_id: str) -> str:
+    h = hashlib.md5(group_id.encode("utf-8")).digest()
+    adj = _NAME_ADJ[h[0] % len(_NAME_ADJ)]
+    noun = _NAME_NOUN[h[1] % len(_NAME_NOUN)]
+    num = h[2] % 90 + 10  # 10..99
+    return f"{adj} {noun} {num}"
+
 class GroupRoom:
     def __init__(self, group_id: str):
         self.group_id = group_id
+        self.name = friendly_group_name(group_id)
         # List of {"session_id": str, "nickname": str, "is_active": bool}
         self.players: List[Dict[str, Any]] = []
         # List of pending invitations: {"challenge_id": str, "challenger_id": str, "challenger_name": str, "target_id": str, "target_name": str, "game_type": str, "status": str}
@@ -97,6 +119,7 @@ class GroupRoom:
     def get_state(self) -> Dict[str, Any]:
         return {
             "group_id": self.group_id,
+            "group_name": self.name,
             "players": self.players,
             "challenges": self.challenges,
             "active_games": {
