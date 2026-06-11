@@ -1,0 +1,11 @@
+services:
+  web:
+    # Image wird von GitHub Actions gebaut und nach GHCR gepusht.
+    # Override per .env:  IMAGE=ghcr.io/l8tenever/freya:main  docker compose up -d
+    image: ${IMAGE:-ghcr.io/l8tenever/freya:latest}
+    pull_policy: always
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped

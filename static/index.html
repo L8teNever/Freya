@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Freya - Multiplayer Games</title>
+    <!-- Google Fonts for Outfit (Modern Material look) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Google Material Symbols (Icons) -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="dark-theme">
+    <!-- App Container -->
+    <div class="app-layout">
+        
+        <!-- Navigation Rail (Desktop & Tablet) -->
+        <nav class="nav-rail" id="nav-rail">
+            <div class="brand">
+                <span class="material-symbols-rounded logo-icon">casino</span>
+                <span class="brand-text">Freya</span>
+            </div>
+            
+            <div class="nav-rail-destinations">
+                <button class="nav-destination active" onclick="app.navigateToLobby()">
+                    <span class="material-symbols-rounded">home</span>
+                    <span class="nav-label">Home</span>
+                </button>
+                <button class="nav-destination" id="nav-group-btn" disabled onclick="app.navigateToGroup()">
+                    <span class="material-symbols-rounded">group</span>
+                    <span class="nav-label">Gruppe</span>
+                </button>
+            </div>
+            
+            <div class="nav-rail-footer">
+                <button class="icon-btn" onclick="app.openSettings()" title="Einstellungen">
+                    <span class="material-symbols-rounded">settings</span>
+                </button>
+                <button class="icon-btn" onclick="app.toggleTheme()">
+                    <span class="material-symbols-rounded" id="theme-icon">light_mode</span>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Workspace -->
+        <main class="main-content">
+            
+            <!-- Top App Bar -->
+            <header class="top-app-bar">
+                <div class="top-app-bar-start">
+                    <button class="icon-btn mobile-only" id="mobile-back-btn" style="display: none;" onclick="app.handleBack()">
+                        <span class="material-symbols-rounded">arrow_back</span>
+                    </button>
+                    <h1 class="page-title" id="page-title">Freya Games</h1>
+                </div>
+                <div class="top-app-bar-end">
+                    <button class="icon-btn" onclick="app.openSettings()" title="Einstellungen">
+                        <span class="material-symbols-rounded">settings</span>
+                    </button>
+                    <div class="user-chip" id="user-profile-chip" style="display: none;" onclick="app.showNicknameModal(true)">
+                        <span class="material-symbols-rounded">account_circle</span>
+                        <span id="user-chip-name">Spieler</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Screens Container -->
+            <div class="screens-viewport">
+                
+                <!-- Screen 1: Lobby -->
+                <section class="screen active" id="screen-lobby">
+                    <div class="hero-section">
+                        <h2 class="hero-title">Willkommen bei Freya</h2>
+                        <p class="hero-subtitle">Erstelle eine Gruppe, lade Freunde ein und fordere sie zu spannenden Matches heraus.</p>
+                        
+                        <div class="action-card-container">
+                            <button class="btn btn-primary btn-large" onclick="app.createNewGroup()">
+                                <span class="material-symbols-rounded">group_add</span>
+                                Neue Gruppe erstellen
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Multiple Cached Groups List Card -->
+                    <div class="card recent-groups-card" id="recent-groups-card" style="display: none;">
+                        <div class="card-header">
+                            <span class="material-symbols-rounded card-icon text-primary">history</span>
+                            <div class="card-title-area">
+                                <h3>Deine Gruppen</h3>
+                                <p>Wähle eine deiner verknüpften Gruppen aus, um direkt beizutreten.</p>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div class="recent-groups-list" id="recent-groups-list">
+                                <!-- Dynamic recent groups will list here -->
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Screen 2: Group Room -->
+                <section class="screen" id="screen-group">
+                    <div class="group-grid">
+                        
+                        <!-- Left Panel: Group Settings & Players -->
+                        <div class="group-sidebar-card">
+                            <!-- Players List Card -->
+                            <div class="card players-card">
+                                <div class="card-header">
+                                    <span class="material-symbols-rounded text-primary">groups</span>
+                                    <h3>Mitglieder</h3>
+                                </div>
+                                <div class="card-content">
+                                    <ul class="player-list" id="group-player-list">
+                                        <!-- Dynamic list of players -->
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Active Games List Card -->
+                            <div class="card active-games-card" id="active-games-card">
+                                <div class="card-header">
+                                    <span class="material-symbols-rounded text-primary">play_circle</span>
+                                    <h3>Laufende Matches</h3>
+                                </div>
+                                <div class="card-content">
+                                    <ul class="active-games-list" id="group-active-games-list">
+                                        <!-- List of active game sessions -->
+                                    </ul>
+                                </div>
+                            </div>
+                            
+                            <!-- Share Card -->
+                            <div class="card share-card">
+                                <div class="card-header">
+                                    <span class="material-symbols-rounded text-primary">share</span>
+                                    <h3>Freunde einladen</h3>
+                                </div>
+                                <div class="card-content">
+                                    <p>Teile diesen Link oder lasse deine Freunde den QR-Code scannen.</p>
+                                    
+                                    <div class="qr-container">
+                                        <img id="qr-code-image" src="" alt="QR-Code zum Beitreten">
+                                    </div>
+                                    
+                                    <div class="share-link-wrapper">
+                                        <input type="text" id="share-link-input" readonly value="">
+                                        <button class="icon-btn text-primary" onclick="app.copyShareLink()">
+                                            <span class="material-symbols-rounded">content_copy</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Panel: Games Lobby Catalog or Active Match -->
+                        <div class="game-workspace">
+                            
+                            <!-- State A: Group Catalog Lobby -->
+                            <div class="catalog-workspace" id="group-lobby-workspace">
+                                <div class="workspace-header">
+                                    <h2>Spiele-Katalog</h2>
+                                    <p>Wähle ein Spiel aus, um ein Mitglied deiner Gruppe herauszufordern.</p>
+                                </div>
+                                <div id="alone-guide-container"></div>
+                                <div class="games-catalog-grid" id="games-catalog-grid">
+                                    <!-- Dynamic list of 20 games -->
+                                </div>
+                            </div>
+
+                            <!-- State B: Active Match Display -->
+                            <div class="card game-card" id="group-active-game-workspace" style="display: none;">
+                                <div class="card-header game-card-header">
+                                    <div class="game-meta-info">
+                                        <span class="game-tag" id="game-status-tag">Spielt</span>
+                                        <h3 id="game-title">Tic-Tac-Toe</h3>
+                                    </div>
+                                    <div style="display:flex; gap:8px;">
+                                        <button class="btn btn-tonal" id="dispute-btn" onclick="app.openDisputePicker()" title="Einen Zug anfechten">
+                                            <span class="material-symbols-rounded">gavel</span>
+                                            Anfechten
+                                        </button>
+                                        <button class="btn btn-tonal" id="exit-game-btn" onclick="app.exitActiveGameView()">
+                                            <span class="material-symbols-rounded">logout</span>
+                                            Match verlassen
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <div class="card-content game-container" id="game-container">
+                                    <!-- Game board rendered here -->
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </section>
+
+            </div>
+
+            <!-- Bottom Navigation (Mobile Only) -->
+            <nav class="bottom-nav" id="bottom-nav">
+                <button class="bottom-nav-item active" onclick="app.navigateToLobby()">
+                    <span class="material-symbols-rounded">home</span>
+                    <span class="bottom-nav-label">Home</span>
+                </button>
+                <button class="bottom-nav-item" id="bottom-group-btn" disabled onclick="app.navigateToGroup()">
+                    <span class="material-symbols-rounded">group</span>
+                    <span class="bottom-nav-label">Gruppe</span>
+                </button>
+            </nav>
+
+        </main>
+    </div>
+
+    <!-- Dialogs & Modals -->
+    <!-- Nickname Selector Modal -->
+    <div class="dialog-overlay" id="nickname-modal">
+        <div class="dialog">
+            <h3 class="dialog-title" id="nickname-modal-title">Spitzname wählen</h3>
+            <p class="dialog-supporting-text">Bitte wähle einen Spitznamen, der den anderen in deiner Spielgruppe angezeigt wird.</p>
+            
+            <div class="text-field">
+                <input type="text" id="nickname-input" placeholder="Spitzname eingeben" maxlength="15" autofocus>
+                <label for="nickname-input">Spitzname</label>
+            </div>
+            
+            <div class="dialog-actions">
+                <button class="btn btn-text" id="nickname-cancel-btn" style="display: none;" onclick="app.closeNicknameModal(true)">Abbrechen</button>
+                <button class="btn btn-primary" onclick="app.submitNickname()">Bestätigen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Challenge Send Selection Modal -->
+    <div class="dialog-overlay" id="challenge-send-modal">
+        <div class="dialog">
+            <h3 class="dialog-title">Herausforderung senden</h3>
+            <p class="dialog-supporting-text" id="challenge-send-subtitle">Wähle ein Mitglied aus, um eine Runde zu spielen:</p>
+            
+            <div class="player-select-list" id="challenge-player-select-list">
+                <!-- List of players to challenge -->
+            </div>
+            
+            <div class="dialog-actions">
+                <button class="btn btn-text" onclick="app.closeChallengeSendModal()">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Challenge Received Modal -->
+    <div class="dialog-overlay" id="challenge-received-modal">
+        <div class="dialog">
+            <h3 class="dialog-title">Herausforderung!</h3>
+            <p class="dialog-supporting-text" id="challenge-received-text">Jemand lädt dich zu einem Spiel ein.</p>
+            
+            <div class="dialog-actions">
+                <button class="btn btn-tonal" id="decline-challenge-btn" onclick="app.respondToChallenge('decline')">Ablehnen</button>
+                <button class="btn btn-primary" id="accept-challenge-btn" onclick="app.respondToChallenge('accept')">Annehmen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dispute Picker Modal (choose who to challenge) -->
+    <div class="dialog-overlay" id="dispute-picker-modal">
+        <div class="dialog">
+            <h3 class="dialog-title">⚖ Anfechten</h3>
+            <p class="dialog-supporting-text">Wessen Zug/Antwort möchtest du anfechten? Danach stimmt die Gruppe ab.</p>
+            <div class="player-select-list" id="dispute-picker-list"></div>
+            <div class="dialog-actions">
+                <button class="btn btn-text" onclick="app.closeDisputePicker()">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Dispute Voting Modal -->
+    <div class="dialog-overlay" id="dispute-modal">
+        <div class="dialog">
+            <h3 class="dialog-title">⚖ Abstimmung</h3>
+            <p class="dialog-supporting-text" id="dispute-text">...</p>
+            <div class="dialog-actions" id="dispute-actions" style="flex-wrap: wrap; gap: 8px;"></div>
+        </div>
+    </div>
+
+    <!-- Settings Modal (account + Schulmodus) -->
+    <div class="dialog-overlay" id="settings-modal">
+        <div class="dialog">
+            <h3 class="dialog-title">Einstellungen</h3>
+
+            <div class="text-field" style="margin-top: 8px;">
+                <input type="text" id="settings-name-input" placeholder="Anzeigename" maxlength="15">
+                <label for="settings-name-input">Anzeigename</label>
+            </div>
+
+            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 4px; cursor:pointer;">
+                <span>
+                    <strong style="display:block;">Schulmodus</strong>
+                    <span style="font-size:12px; color:var(--on-surface-variant);">Unterdrückt alle Töne – nichts kommt aus dem Gerät.</span>
+                </span>
+                <input type="checkbox" id="settings-school-toggle" style="width:20px; height:20px;">
+            </label>
+
+            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 4px; cursor:pointer;">
+                <span>
+                    <strong style="display:block;">Stumm</strong>
+                    <span style="font-size:12px; color:var(--on-surface-variant);">Spiel-Sounds aus.</span>
+                </span>
+                <input type="checkbox" id="settings-mute-toggle" style="width:20px; height:20px;">
+            </label>
+
+            <div class="dialog-actions">
+                <button class="btn btn-text" onclick="app.closeSettings()">Abbrechen</button>
+                <button class="btn btn-primary" onclick="app.saveSettings()">Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div class="toast" id="toast">
+        <span class="toast-text" id="toast-text">Benachrichtigung</span>
+    </div>
+
+    <!-- Core Javascript -->
+    <script src="/static/js/sound.js"></script>
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/games/tictactoe.js"></script>
+    <script src="/static/js/games/placeholder.js"></script>
+    <script src="/static/js/games/stadtlandfluss.js"></script>
+    <script src="/static/js/games/wortkette.js"></script>
+    <script src="/static/js/games/bombe.js"></script>
+    <script src="/static/js/games/bingo.js"></script>
+    <script src="/static/js/games/zweiwahrheiten.js"></script>
+    <script src="/static/js/games/werbinich.js"></script>
+    <script src="/static/js/games/kniffel.js"></script>
+    <script src="/static/js/games/aerger.js"></script>
+</body>
+</html>
