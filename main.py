@@ -56,6 +56,11 @@ async def get_group_page(group_id: str):
     # Standard SPA fallback: return the main HTML file, client-side JS will read the path
     return FileResponse("static/index.html")
 
+@app.get("/group/{group_id}/spiel/{session_id}")
+async def get_group_game_page(group_id: str, session_id: str):
+    # Deep-link directly into an active game; client-side JS reads the path
+    return FileResponse("static/index.html")
+
 # Mount static files (HTML/CSS/JS)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

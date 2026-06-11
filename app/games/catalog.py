@@ -10,6 +10,7 @@ from app.games.zweiwahrheiten import ZweiWahrheitenGame
 from app.games.werbinich import WerBinIchGame
 from app.games.kniffel import KniffelGame
 from app.games.aerger import AergerGame
+from app.games.connectfour import ConnectFourGame
 
 # 20 Games Catalog
 GAMES_CATALOG: List[Dict[str, Any]] = [
@@ -29,7 +30,7 @@ GAMES_CATALOG: List[Dict[str, Any]] = [
         "description": "Lasse deine Chips fallen und bringe 4 in eine Reihe.",
         "min_players": 2,
         "max_players": 2,
-        "is_playable": False
+        "is_playable": True
     },
     {
         "id": "battleship",
@@ -271,6 +272,8 @@ def get_game_class(game_type: str) -> Optional[Type[BaseGame]]:
         return KniffelGame
     elif game_type == "aerger":
         return AergerGame
+    elif game_type == "connectfour":
+        return ConnectFourGame
     return None
 
 class CardDrawGame(BaseGame):

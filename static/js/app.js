@@ -60,26 +60,30 @@ class FreyaApp {
     // --- Routing ---
     handleRouting() {
         const path = window.location.pathname;
+        const gameMatch = path.match(/^\/group\/([a-zA-Z0-9_-]+)\/spiel\/([a-zA-Z0-9_-]+)$/);
         const groupMatch = path.match(/^\/group\/([a-zA-Z0-9_-]+)$/);
-        
-        if (groupMatch) {
-            const groupId = groupMatch[1];
-            this.currentGroupId = groupId;
-            this.enterGroupRoom();
+
+        if (gameMatch) {
+            this.enterGroupRoom(gameMatch[1]);
+            this.showGameView(gameMatch[2]);
+        } else if (groupMatch) {
+            this.enterGroupRoom(groupMatch[1]);
+            this.showLobbyView();
         } else {
             this.currentGroupId = null;
             this.activeGameSessionId = null;
+            document.body.classList.remove('in-game');
             this.disconnectWebSocket();
             this.showScreen('screen-lobby');
             document.getElementById('page-title').textContent = 'Freya Games';
             document.getElementById('mobile-back-btn').style.display = 'none';
-            
+
             // Disable navigation to group tab
             document.getElementById('nav-group-btn').disabled = true;
             document.getElementById('bottom-group-btn').disabled = true;
             document.getElementById('nav-group-btn').classList.remove('active');
             document.getElementById('bottom-group-btn').classList.remove('active');
-            
+
             document.querySelector('.nav-destination:first-child').classList.add('active');
             document.querySelector('.bottom-nav-item:first-child').classList.add('active');
             this.checkRecentGroups();
@@ -92,7 +96,12 @@ class FreyaApp {
     }
 
     handleBack() {
-        this.navigate('/');
+        // In a game -> back to group lobby; in lobby -> back home
+        if (this.activeGameSessionId && this.currentGroupId) {
+            this.navigate(`/group/${this.currentGroupId}`);
+        } else {
+            this.navigate('/');
+        }
     }
 
     navigateToLobby() {
@@ -211,43 +220,68 @@ class FreyaApp {
         this.navigate(`/group/${randomId}`);
     }
 
-    enterGroupRoom() {
+    enterGroupRoom(groupId) {
+        const switching = this.currentGroupId !== groupId;
+        this.currentGroupId = groupId;
+
         // Show Navigation tabs
         const navGroupBtn = document.getElementById('nav-group-btn');
         const bottomGroupBtn = document.getElementById('bottom-group-btn');
         navGroupBtn.disabled = false;
         bottomGroupBtn.disabled = false;
-        
+
         // Toggle Active styles
         document.querySelectorAll('.nav-destination').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.bottom-nav-item').forEach(b => b.classList.remove('active'));
         navGroupBtn.classList.add('active');
         bottomGroupBtn.classList.add('active');
-        
-        document.getElementById('page-title').textContent = `Gruppe: ${this.currentGroupId}`;
+
+        document.getElementById('page-title').textContent = `Gruppe: ${groupId}`;
         document.getElementById('mobile-back-btn').style.display = 'flex';
-        
+
         this.showScreen('screen-group');
-        this.saveGroupToCache(this.currentGroupId);
-        
-        // Reset active workspace state
+
+        // Only (re)connect & reset when actually switching groups — keeps the
+        // socket alive when navigating between lobby and a game sub-route.
+        if (switching) {
+            this._catalogBuilt = false;
+            this.saveGroupToCache(groupId);
+            this.setupShareInformation();
+            if (!this.nickname) {
+                this.showNicknameModal(false);
+            } else {
+                this.setupUserChip();
+                this.connectWebSocket();
+            }
+        }
+    }
+
+    showLobbyView() {
         this.activeGameSessionId = null;
+        document.body.classList.remove('in-game');
         document.getElementById('group-lobby-workspace').style.display = 'block';
         document.getElementById('group-active-game-workspace').style.display = 'none';
+    }
 
-        // Make sure user has nickname
-        if (!this.nickname) {
-            this.showNicknameModal(false);
-        } else {
-            this.setupUserChip();
-            this.connectWebSocket();
+    showGameView(gameSessionId) {
+        this.activeGameSessionId = gameSessionId;
+        document.body.classList.add('in-game');
+        document.getElementById('group-lobby-workspace').style.display = 'none';
+        document.getElementById('group-active-game-workspace').style.display = 'flex';
+
+        // Render immediately if state is already available; otherwise the next
+        // state_update will fill it in.
+        if (this.gameState && this.gameState.active_games && this.gameState.active_games[gameSessionId]) {
+            const gState = this.gameState.active_games[gameSessionId];
+            document.getElementById('game-title').textContent = this.getGameDisplayName(gState.game_type);
+            this.renderGameSession(gState);
+            this.renderDisputeFor(gState);
         }
-
-        this.setupShareInformation();
     }
 
     setupShareInformation() {
-        const shareUrl = window.location.href;
+        // Always share the group URL (never a game sub-route).
+        const shareUrl = `${window.location.origin}/group/${this.currentGroupId}`;
         document.getElementById('share-link-input').value = shareUrl;
         
         // Load QR code from dynamic QR API
@@ -420,29 +454,32 @@ class FreyaApp {
             aloneGuideContainer.innerHTML = '';
         }
 
-        // 2. Render Catalog Grid (if not empty/already filled)
+        // 2. Render Catalog Grid — static, build only once per group (no per-update flicker)
         const catalogGrid = document.getElementById('games-catalog-grid');
-        catalogGrid.innerHTML = '';
-        state.games_catalog.forEach(game => {
-            const card = document.createElement('div');
-            card.className = 'game-catalog-card';
-            card.innerHTML = `
-                <div class="game-catalog-card-header">
-                    <span class="material-symbols-rounded game-catalog-icon">${game.icon}</span>
-                    <span class="game-catalog-title">${game.name}</span>
-                </div>
-                <p class="game-catalog-desc">${game.description}</p>
-                <div style="display:flex; justify-content: space-between; align-items:center;">
-                    <span class="game-catalog-badge ${game.is_playable ? 'playable' : 'placeholder'}">
-                        ${game.is_playable ? 'Spielbar' : 'In Kürze'}
-                    </span>
-                    <button class="btn btn-primary btn-small" onclick="app.openChallengeSendModal('${game.id}')">
-                        Einladen
-                    </button>
-                </div>
-            `;
-            catalogGrid.appendChild(card);
-        });
+        if (!this._catalogBuilt) {
+            catalogGrid.innerHTML = '';
+            state.games_catalog.forEach(game => {
+                const card = document.createElement('div');
+                card.className = 'game-catalog-card';
+                card.innerHTML = `
+                    <div class="game-catalog-card-header">
+                        <span class="material-symbols-rounded game-catalog-icon">${game.icon}</span>
+                        <span class="game-catalog-title">${game.name}</span>
+                    </div>
+                    <p class="game-catalog-desc">${game.description}</p>
+                    <div style="display:flex; justify-content: space-between; align-items:center;">
+                        <span class="game-catalog-badge ${game.is_playable ? 'playable' : 'placeholder'}">
+                            ${game.is_playable ? 'Spielbar' : 'In Kürze'}
+                        </span>
+                        <button class="btn btn-primary btn-small" onclick="app.openChallengeSendModal('${game.id}')">
+                            Einladen
+                        </button>
+                    </div>
+                `;
+                catalogGrid.appendChild(card);
+            });
+            this._catalogBuilt = true;
+        }
 
         // 3. Update active concurrent games list in sidebar
         const activeGamesList = document.getElementById('group-active-games-list');
@@ -520,7 +557,8 @@ class FreyaApp {
             "zweiwahrheiten": "2 Wahrheiten, 1 Lüge",
             "werbinich": "Wer bin ich?",
             "kniffel": "Kniffel",
-            "aerger": "Mensch ärgere dich nicht"
+            "aerger": "Mensch ärgere dich nicht",
+            "connectfour": "Vier gewinnt"
         };
         return names[gameType] || gameType;
     }
@@ -610,27 +648,16 @@ class FreyaApp {
         }
     }
 
-    // --- Game Workspace Switcher ---
+    // --- Game Workspace Switcher (URL-driven) ---
     enterActiveGameView(gameSessionId) {
-        this.activeGameSessionId = gameSessionId;
-        
-        document.getElementById('group-lobby-workspace').style.display = 'none';
-        
-        const workspaceCard = document.getElementById('group-active-game-workspace');
-        workspaceCard.style.display = 'flex';
-        
-        // Read game state
-        if (this.gameState && this.gameState.active_games[gameSessionId]) {
-            const gState = this.gameState.active_games[gameSessionId];
-            document.getElementById('game-title').textContent = this.getGameDisplayName(gState.game_type);
-            this.renderGameSession(gState);
-        }
+        if (!this.currentGroupId) return;
+        this.navigate(`/group/${this.currentGroupId}/spiel/${gameSessionId}`);
     }
 
     exitActiveGameView() {
-        this.activeGameSessionId = null;
-        document.getElementById('group-lobby-workspace').style.display = 'block';
-        document.getElementById('group-active-game-workspace').style.display = 'none';
+        if (this.currentGroupId) {
+            this.navigate(`/group/${this.currentGroupId}`);
+        }
     }
 
     triggerCloseGame(gameSessionId) {
@@ -688,6 +715,11 @@ class FreyaApp {
         } else if (gState.game_type === 'aerger') {
             if (!this.gameController || this.gameController.type !== 'aerger') {
                 this.gameController = new AergerController(this, gameContainer);
+            }
+            this.gameController.render(gState);
+        } else if (gState.game_type === 'connectfour') {
+            if (!this.gameController || this.gameController.type !== 'connectfour') {
+                this.gameController = new ConnectFourController(this, gameContainer);
             }
             this.gameController.render(gState);
         } else if (gState.game_type === 'carddraw') {
