@@ -103,7 +103,8 @@ class GroupRoom:
                 gid: {**game.get_state(), "dispute": game.get_dispute_state()}
                 for gid, game in self.active_games.items()
             },
-            "games_catalog": GAMES_CATALOG
+            # Only expose games that are actually implemented/playable
+            "games_catalog": [g for g in GAMES_CATALOG if g.get("is_playable")]
         }
 
 

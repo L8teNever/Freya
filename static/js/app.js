@@ -245,6 +245,10 @@ class FreyaApp {
         // socket alive when navigating between lobby and a game sub-route.
         if (switching) {
             this._catalogBuilt = false;
+            this._lastStateSig = null;
+            this._lastPlayersSig = null;
+            this._lastGamesSig = null;
+            this._lastGameSig = null;
             this.saveGroupToCache(groupId);
             this.setupShareInformation();
             if (!this.nickname) {
@@ -258,13 +262,16 @@ class FreyaApp {
 
     showLobbyView() {
         this.activeGameSessionId = null;
+        this._lastGameSig = null;
         document.body.classList.remove('in-game');
         document.getElementById('group-lobby-workspace').style.display = 'block';
         document.getElementById('group-active-game-workspace').style.display = 'none';
     }
 
     showGameView(gameSessionId) {
+        const switchingGame = this.activeGameSessionId !== gameSessionId;
         this.activeGameSessionId = gameSessionId;
+        if (switchingGame) this._lastGameSig = null;  // force a fresh render
         document.body.classList.add('in-game');
         document.getElementById('group-lobby-workspace').style.display = 'none';
         document.getElementById('group-active-game-workspace').style.display = 'flex';
@@ -276,6 +283,7 @@ class FreyaApp {
             document.getElementById('game-title').textContent = this.getGameDisplayName(gState.game_type);
             this.renderGameSession(gState);
             this.renderDisputeFor(gState);
+            this._lastGameSig = JSON.stringify(gState);
         }
     }
 
@@ -362,33 +370,43 @@ class FreyaApp {
         this.socket = new WebSocket(url);
         
         this.socket.onopen = () => {
-            console.log('WebSocket connected');
             this.isReconnecting = false;
+            // Keepalive: ping keeps proxies/NAT from killing an idle socket
+            // (server ignores unknown types -> no broadcast, no flicker).
+            if (this._pingInterval) clearInterval(this._pingInterval);
+            this._pingInterval = setInterval(() => {
+                if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                    this.socket.send(JSON.stringify({ type: 'ping' }));
+                }
+            }, 25000);
         };
-        
+
         this.socket.onmessage = (event) => {
             const data = JSON.parse(event.data);
             if (data.type === 'state_update') {
                 this.handleStateUpdate(data.state);
             }
         };
-        
-        this.socket.onclose = (e) => {
-            console.log('WebSocket closed', e.reason);
+
+        this.socket.onclose = () => {
+            // Only auto-reconnect on an *unexpected* drop while still in a group.
+            if (this._pingInterval) { clearInterval(this._pingInterval); this._pingInterval = null; }
             if (this.currentGroupId && !this.isReconnecting) {
                 this.isReconnecting = true;
                 setTimeout(() => this.connectWebSocket(), 3000);
             }
         };
-        
-        this.socket.onerror = (err) => {
-            console.error('WebSocket error:', err);
-        };
+
+        this.socket.onerror = () => {};
     }
 
     disconnectWebSocket() {
+        if (this._pingInterval) { clearInterval(this._pingInterval); this._pingInterval = null; }
         if (this.socket) {
-            this.socket.close();
+            // Detach handlers so a deliberate close does NOT trigger a reconnect
+            this.socket.onopen = this.socket.onmessage = this.socket.onerror = null;
+            this.socket.onclose = null;
+            try { this.socket.close(); } catch (e) { /* ignore */ }
             this.socket = null;
         }
     }
@@ -422,41 +440,51 @@ class FreyaApp {
     handleStateUpdate(state) {
         this.gameState = state;
 
-        // 1. Update Group Members list
-        const playersList = document.getElementById('group-player-list');
-        playersList.innerHTML = '';
-        state.players.forEach(p => {
-            const li = document.createElement('li');
-            li.className = `player-item ${p.is_active ? 'active' : 'inactive'}`;
-            li.innerHTML = `
-                <div class="player-item-info">
-                    <span class="player-status-dot"></span>
-                    <span>${p.nickname} ${p.session_id === this.sessionId ? '(Du)' : ''}</span>
-                </div>
-            `;
-            playersList.appendChild(li);
-        });
+        // Skip all DOM work if the incoming state is byte-for-byte identical to
+        // the last one (e.g. reconnect re-sends, duplicate broadcasts). This is
+        // what stops the periodic "right side reloads" flicker.
+        const sig = JSON.stringify(state);
+        if (sig === this._lastStateSig) return;
+        this._lastStateSig = sig;
 
-        // Update alone guidance banner if user is alone
-        const aloneGuideContainer = document.getElementById('alone-guide-container');
-        const activePlayersCount = state.players.filter(p => p.is_active).length;
-        if (activePlayersCount === 1) {
-            aloneGuideContainer.innerHTML = `
-                <div class="alone-guide-banner" style="background-color: var(--primary-container); color: var(--on-primary-container); padding: 16px; border-radius: 20px; display: flex; align-items: center; gap: 12px; margin-bottom: 20px; border: 1px solid var(--outline-variant);">
-                    <span class="material-symbols-rounded" style="font-size: 32px; color: var(--primary);">info</span>
-                    <div>
-                        <strong style="display: block; font-size: 15px; margin-bottom: 2px;">Du bist noch allein in der Gruppe</strong>
-                        <span style="font-size: 13px; opacity: 0.9;">Scanne den QR-Code links oder kopiere den Einladungs-Link, um deine Freunde einzuladen. Sobald sie beitreten, kannst du sie hier herausfordern!</span>
+        // 1. Members list + alone banner (only when membership changed)
+        const playersSig = JSON.stringify(state.players.map(p => [p.session_id, p.nickname, p.is_active]));
+        if (playersSig !== this._lastPlayersSig) {
+            this._lastPlayersSig = playersSig;
+
+            const playersList = document.getElementById('group-player-list');
+            playersList.innerHTML = '';
+            state.players.forEach(p => {
+                const li = document.createElement('li');
+                li.className = `player-item ${p.is_active ? 'active' : 'inactive'}`;
+                li.innerHTML = `
+                    <div class="player-item-info">
+                        <span class="player-status-dot"></span>
+                        <span>${p.nickname} ${p.session_id === this.sessionId ? '(Du)' : ''}</span>
                     </div>
-                </div>
-            `;
-        } else {
-            aloneGuideContainer.innerHTML = '';
+                `;
+                playersList.appendChild(li);
+            });
+
+            const aloneGuideContainer = document.getElementById('alone-guide-container');
+            if (state.players.filter(p => p.is_active).length === 1) {
+                aloneGuideContainer.innerHTML = `
+                    <div class="alone-guide-banner" style="background-color: var(--primary-container); color: var(--on-primary-container); padding: 16px; border-radius: 20px; display: flex; align-items: center; gap: 12px; margin-bottom: 20px; border: 1px solid var(--outline-variant);">
+                        <span class="material-symbols-rounded" style="font-size: 32px; color: var(--primary);">info</span>
+                        <div>
+                            <strong style="display: block; font-size: 15px; margin-bottom: 2px;">Du bist noch allein in der Gruppe</strong>
+                            <span style="font-size: 13px; opacity: 0.9;">Scanne den QR-Code links oder kopiere den Einladungs-Link, um deine Freunde einzuladen. Sobald sie beitreten, kannst du sie hier herausfordern!</span>
+                        </div>
+                    </div>
+                `;
+            } else {
+                aloneGuideContainer.innerHTML = '';
+            }
         }
 
-        // 2. Render Catalog Grid — static, build only once per group (no per-update flicker)
-        const catalogGrid = document.getElementById('games-catalog-grid');
+        // 2. Catalog Grid — static, build only once per group (no flicker)
         if (!this._catalogBuilt) {
+            const catalogGrid = document.getElementById('games-catalog-grid');
             catalogGrid.innerHTML = '';
             state.games_catalog.forEach(game => {
                 const card = document.createElement('div');
@@ -467,10 +495,7 @@ class FreyaApp {
                         <span class="game-catalog-title">${game.name}</span>
                     </div>
                     <p class="game-catalog-desc">${game.description}</p>
-                    <div style="display:flex; justify-content: space-between; align-items:center;">
-                        <span class="game-catalog-badge ${game.is_playable ? 'playable' : 'placeholder'}">
-                            ${game.is_playable ? 'Spielbar' : 'In Kürze'}
-                        </span>
+                    <div style="display:flex; justify-content: flex-end; align-items:center;">
                         <button class="btn btn-primary btn-small" onclick="app.openChallengeSendModal('${game.id}')">
                             Einladen
                         </button>
@@ -481,68 +506,75 @@ class FreyaApp {
             this._catalogBuilt = true;
         }
 
-        // 3. Update active concurrent games list in sidebar
-        const activeGamesList = document.getElementById('group-active-games-list');
-        activeGamesList.innerHTML = '';
-        
-        const sessions = Object.keys(state.active_games);
-        if (sessions.length === 0) {
-            activeGamesList.innerHTML = '<li class="no-games-placeholder">Keine laufenden Matches</li>';
-        } else {
-            sessions.forEach(sessId => {
-                const gState = state.active_games[sessId];
-                const li = document.createElement('li');
-                li.className = 'active-game-item';
-                
-                const playersStr = gState.players.map(p => p.nickname).join(' vs ');
-                const isUserInGame = gState.players.some(p => p.session_id === this.sessionId);
-                
-                const actionLabel = isUserInGame ? 'Spielen' : 'Zuschauen';
-                const actionIcon = isUserInGame ? 'play_arrow' : 'visibility';
-                const canJoin = !isUserInGame && gState.joinable;
-
-                li.innerHTML = `
-                    <div class="active-game-meta">
-                        <span>${this.getGameDisplayName(gState.game_type)}</span>
-                        <span style="font-size: 11px; text-transform: uppercase;">${gState.status}</span>
-                    </div>
-                    <div class="active-game-players">${playersStr}</div>
-                    <div class="active-game-actions">
-                        ${isUserInGame && gState.status === 'finished' ? `
-                            <button class="btn btn-text" style="color: var(--error);" onclick="app.triggerCloseGame('${sessId}')">
-                                Schließen
+        // 3. Active concurrent games list (rebuild only when it changed)
+        const gamesSig = JSON.stringify(Object.keys(state.active_games).map(id => {
+            const g = state.active_games[id];
+            return [id, g.game_type, g.status, g.joinable, g.players.map(p => p.session_id)];
+        }));
+        if (gamesSig !== this._lastGamesSig) {
+            this._lastGamesSig = gamesSig;
+            const activeGamesList = document.getElementById('group-active-games-list');
+            activeGamesList.innerHTML = '';
+            const sessions = Object.keys(state.active_games);
+            if (sessions.length === 0) {
+                activeGamesList.innerHTML = '<li class="no-games-placeholder">Keine laufenden Matches</li>';
+            } else {
+                sessions.forEach(sessId => {
+                    const gState = state.active_games[sessId];
+                    const li = document.createElement('li');
+                    li.className = 'active-game-item';
+                    const playersStr = gState.players.map(p => p.nickname).join(' vs ');
+                    const isUserInGame = gState.players.some(p => p.session_id === this.sessionId);
+                    const actionLabel = isUserInGame ? 'Spielen' : 'Zuschauen';
+                    const actionIcon = isUserInGame ? 'play_arrow' : 'visibility';
+                    const canJoin = !isUserInGame && gState.joinable;
+                    li.innerHTML = `
+                        <div class="active-game-meta">
+                            <span>${this.getGameDisplayName(gState.game_type)}</span>
+                            <span style="font-size: 11px; text-transform: uppercase;">${gState.status}</span>
+                        </div>
+                        <div class="active-game-players">${playersStr}</div>
+                        <div class="active-game-actions">
+                            ${isUserInGame && gState.status === 'finished' ? `
+                                <button class="btn btn-text" style="color: var(--error);" onclick="app.triggerCloseGame('${sessId}')">
+                                    Schließen
+                                </button>
+                            ` : ''}
+                            ${canJoin ? `
+                                <button class="btn btn-primary" onclick="app.sendGameJoin('${sessId}')">
+                                    <span class="material-symbols-rounded" style="font-size: 16px;">person_add</span>
+                                    Mitspielen
+                                </button>
+                            ` : ''}
+                            <button class="btn btn-tonal" onclick="app.enterActiveGameView('${sessId}')">
+                                <span class="material-symbols-rounded" style="font-size: 16px;">${actionIcon}</span>
+                                ${actionLabel}
                             </button>
-                        ` : ''}
-                        ${canJoin ? `
-                            <button class="btn btn-primary" onclick="app.sendGameJoin('${sessId}')">
-                                <span class="material-symbols-rounded" style="font-size: 16px;">person_add</span>
-                                Mitspielen
-                            </button>
-                        ` : ''}
-                        <button class="btn btn-tonal" onclick="app.enterActiveGameView('${sessId}')">
-                            <span class="material-symbols-rounded" style="font-size: 16px;">${actionIcon}</span>
-                            ${actionLabel}
-                        </button>
-                    </div>
-                `;
-                activeGamesList.appendChild(li);
-            });
+                        </div>
+                    `;
+                    activeGamesList.appendChild(li);
+                });
+            }
         }
 
-        // 4. Update the Active Game workspace if currently showing a game
+        // 4. Active Game workspace — re-render only when THIS game's state changed
         if (this.activeGameSessionId) {
             const activeSessionState = state.active_games[this.activeGameSessionId];
             if (!activeSessionState) {
-                // The game was closed or disappeared
+                this._lastGameSig = null;
                 this.exitActiveGameView();
                 this.showToast('Das Spiel wurde geschlossen.');
             } else {
-                this.renderGameSession(activeSessionState);
+                const gjson = JSON.stringify(activeSessionState);
+                if (gjson !== this._lastGameSig) {
+                    this._lastGameSig = gjson;
+                    this.renderGameSession(activeSessionState);
+                }
                 this.renderDisputeFor(activeSessionState);
             }
         }
 
-        // 5. Handle incoming/pending challenges
+        // 5. Pending challenges
         this.checkPendingChallenges(state.challenges);
     }
 
