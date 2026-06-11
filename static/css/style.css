@@ -852,6 +852,7 @@ body.dark-theme .btn-text:hover:not(:disabled) {
     left: 0;
     width: 100vw;
     height: 100vh;
+    height: 100dvh; /* match visible viewport so bottom-anchored sheets aren't cut off */
     background-color: rgba(0, 0, 0, 0.5);
     display: flex;
     justify-content: center;
@@ -1101,14 +1102,21 @@ body.dark-theme .btn-text:hover:not(:disabled) {
     .dialog {
         max-width: 100%;
         width: 100%;
+        max-height: 88dvh;
+        overflow-y: auto;
         border-radius: 28px 28px 0 0;
-        align-self: flex-end;
         margin-bottom: 0;
-        transform: translateY(20px);
-        padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+        transform: translateY(100%);
+        padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
     }
-    .dialog-overlay { align-items: flex-end; }
+    .dialog-overlay {
+        align-items: flex-end;
+        justify-content: stretch;
+    }
     .dialog-overlay.active .dialog { transform: translateY(0); }
+
+    /* Let the challenge player list grow with the sheet instead of a tiny box */
+    .player-select-list { max-height: 50dvh; }
 
     .toast { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
 }
