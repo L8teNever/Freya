@@ -1,4 +1,6 @@
+import asyncio
 import json
+import time
 import uuid
 import hashlib
 from typing import Dict, Set, Optional, Any, List
@@ -50,7 +52,8 @@ class GroupRoom:
         self.players.append({
             "session_id": session_id,
             "nickname": nickname,
-            "is_active": True
+            "is_active": True,
+            "last_active": time.time()
         })
         return True
 
@@ -87,7 +90,8 @@ class GroupRoom:
             "target_id": target_id,
             "target_name": target["nickname"],
             "game_type": game_type,
-            "status": "pending"
+            "status": "pending",
+            "created_at": time.time()
         }
         self.challenges.append(challenge)
         return challenge
@@ -123,7 +127,7 @@ class GroupRoom:
             "players": self.players,
             "challenges": self.challenges,
             "active_games": {
-                gid: {**game.get_state(), "dispute": game.get_dispute_state()}
+                gid: {**game.get_state(), "dispute": game.get_dispute_state(), "left_players": game.left_players}
                 for gid, game in self.active_games.items()
             },
             # Only expose games that are actually implemented/playable
@@ -139,6 +143,7 @@ class GroupManager:
         self.user_websockets: Dict[str, Set[WebSocket]] = {}
         # Maps session_id -> group_id
         self.user_groups: Dict[str, str] = {}
+        self._idle_task = None
 
     def get_or_create_room(self, group_id: str) -> GroupRoom:
         if group_id not in self.rooms:
@@ -148,18 +153,45 @@ class GroupManager:
     def get_room(self, group_id: str) -> Optional[GroupRoom]:
         return self.rooms.get(group_id)
 
+    async def _auto_accept_challenge(self, group_id: str, challenge_id: str):
+        await asyncio.sleep(5)
+        room = self.get_room(group_id)
+        if not room:
+            return
+        for ch in room.challenges:
+            if ch["challenge_id"] == challenge_id and ch["status"] == "pending":
+                room.respond_to_challenge(challenge_id, ch["target_id"], "accept")
+                await self.broadcast_group_state(group_id)
+                break
+
+    async def _idle_checker_loop(self):
+        while True:
+            await asyncio.sleep(60)
+            now = time.time()
+            changed_groups: Set[str] = set()
+            for group_id, room in list(self.rooms.items()):
+                for player in room.players:
+                    if player.get("is_active") and now - player.get("last_active", now) > 300:
+                        room.deactivate_player(player["session_id"])
+                        changed_groups.add(group_id)
+            for gid in changed_groups:
+                await self.broadcast_group_state(gid)
+
     async def connect(self, websocket: WebSocket, session_id: str, group_id: str, nickname: str):
         await websocket.accept()
-        
+
         if session_id not in self.user_websockets:
             self.user_websockets[session_id] = set()
         self.user_websockets[session_id].add(websocket)
-        
+
         self.user_groups[session_id] = group_id
 
         room = self.get_or_create_room(group_id)
         room.add_player(session_id, nickname)
-        
+
+        if self._idle_task is None or self._idle_task.done():
+            self._idle_task = asyncio.create_task(self._idle_checker_loop())
+
         await self.broadcast_group_state(group_id)
 
     async def disconnect(self, websocket: WebSocket, session_id: str, group_id: str):
@@ -186,8 +218,18 @@ class GroupManager:
             target_id = message_data.get("target_id")
             game_type = message_data.get("game_type")
             if target_id and game_type:
-                room.create_challenge(session_id, target_id, game_type)
+                ch = room.create_challenge(session_id, target_id, game_type)
+                if ch:
+                    asyncio.create_task(self._auto_accept_challenge(group_id, ch["challenge_id"]))
                 changed = True
+
+        elif msg_type == "activity":
+            player = room.get_player(session_id)
+            if player:
+                player["last_active"] = time.time()
+                if not player.get("is_active"):
+                    player["is_active"] = True
+                    changed = True
 
         elif msg_type == "challenge_respond":
             challenge_id = message_data.get("challenge_id")
@@ -220,6 +262,16 @@ class GroupManager:
                 player = room.get_player(session_id)
                 if player and game.add_participant(player):
                     changed = True
+
+        elif msg_type == "game_leave":
+            game_session_id = message_data.get("game_session_id")
+            game = room.active_games.get(game_session_id)
+            if game:
+                game.mark_left(session_id)
+                if game.all_participants_left():
+                    del room.active_games[game_session_id]
+                    room.challenges = [ch for ch in room.challenges if ch.get("game_session_id") != game_session_id]
+                changed = True
 
         elif msg_type == "game_close":
             game_session_id = message_data.get("game_session_id")

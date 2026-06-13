@@ -23,13 +23,17 @@ class FreyaApp {
         this._modalStack = [];
         this._suppressPop = false;
 
+        // Activity tracking for idle detection
+        this._lastUserActivity = Date.now();
+        this._challengeCountdown = null;
+
         // Listeners for routing
         window.addEventListener('popstate', (e) => this.onPopState(e));
     }
 
     // --- Modal routing: opening a pop-up pushes a history entry so the
     //     phone/browser back button closes it instead of leaving the page. ---
-    onPopState(e) {
+    onPopState(_e) {
         if (this._suppressPop) { this._suppressPop = false; return; }
         if (this._modalStack.length) {
             const id = this._modalStack.pop();
@@ -77,6 +81,10 @@ class FreyaApp {
     init() {
         this.handleRouting();
         this.checkRecentGroups();
+        // Track user interactions to detect real activity vs. idle tab
+        const markActive = () => { this._lastUserActivity = Date.now(); };
+        ['mousemove', 'keydown', 'click', 'touchstart', 'scroll'].forEach(ev =>
+            document.addEventListener(ev, markActive, { passive: true }));
     }
 
     getOrCreateSessionId() {
@@ -312,7 +320,7 @@ class FreyaApp {
     showGameView(gameSessionId) {
         const switchingGame = this.activeGameSessionId !== gameSessionId;
         this.activeGameSessionId = gameSessionId;
-        if (switchingGame) this._lastGameSig = null;  // force a fresh render
+        if (switchingGame) { this._lastGameSig = null; this._lastLeftSig = null; }
         document.body.classList.add('in-game');
         document.getElementById('group-lobby-workspace').style.display = 'none';
         document.getElementById('group-active-game-workspace').style.display = 'flex';
@@ -411,14 +419,15 @@ class FreyaApp {
         
         this.socket.onopen = () => {
             this.isReconnecting = false;
-            // Keepalive: ping keeps proxies/NAT from killing an idle socket
-            // (server ignores unknown types -> no broadcast, no flicker).
+            // Every 30 s: send 'activity' if user was interactive recently,
+            // or plain 'ping' (keepalive only) if the tab is idle.
             if (this._pingInterval) clearInterval(this._pingInterval);
             this._pingInterval = setInterval(() => {
                 if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-                    this.socket.send(JSON.stringify({ type: 'ping' }));
+                    const activeRecently = Date.now() - this._lastUserActivity < 30000;
+                    this.socket.send(JSON.stringify({ type: activeRecently ? 'activity' : 'ping' }));
                 }
-            }, 25000);
+            }, 30000);
         };
 
         this.socket.onmessage = (event) => {
@@ -608,9 +617,22 @@ class FreyaApp {
             const activeSessionState = state.active_games[this.activeGameSessionId];
             if (!activeSessionState) {
                 this._lastGameSig = null;
+                this._lastLeftSig = null;
                 this.exitActiveGameView();
                 this.showToast('Das Spiel wurde geschlossen.');
             } else {
+                // Show toast when a new participant leaves
+                const leftSig = JSON.stringify((activeSessionState.left_players || []).map(p => p.session_id));
+                if (leftSig !== this._lastLeftSig) {
+                    if (this._lastLeftSig !== null) {
+                        const prev = JSON.parse(this._lastLeftSig || '[]');
+                        const curr = activeSessionState.left_players || [];
+                        curr.filter(p => !prev.includes(p.session_id) && p.session_id !== this.sessionId)
+                            .forEach(p => this.showToast(`${p.nickname} hat das Spiel verlassen.`));
+                    }
+                    this._lastLeftSig = leftSig;
+                }
+
                 const gjson = JSON.stringify(activeSessionState);
                 if (gjson !== this._lastGameSig) {
                     this._lastGameSig = gjson;
@@ -687,17 +709,45 @@ class FreyaApp {
     }
 
     checkPendingChallenges(challenges) {
-        // Check if there is a pending challenge targeting this user
         const myChallenge = challenges.find(ch => ch.target_id === this.sessionId && ch.status === 'pending');
-        
         const modal = document.getElementById('challenge-received-modal');
-        
+
         if (myChallenge) {
+            const isNew = !this.activeReceivedChallenge || this.activeReceivedChallenge.challenge_id !== myChallenge.challenge_id;
             this.activeReceivedChallenge = myChallenge;
-            const text = document.getElementById('challenge-received-text');
-            text.innerHTML = `<strong>${myChallenge.challenger_name}</strong> lädt dich zu einer Runde <strong>${this.getGameDisplayName(myChallenge.game_type)}</strong> ein.`;
+
+            document.getElementById('challenge-received-text').innerHTML =
+                `<strong>${myChallenge.challenger_name}</strong> lädt dich zu <strong>${this.getGameDisplayName(myChallenge.game_type)}</strong> ein.<br>` +
+                `<span id="challenge-countdown" style="font-size:12px;color:var(--on-surface-variant)">…</span>`;
+
+            if (isNew) {
+                if (this._challengeCountdown) clearInterval(this._challengeCountdown);
+                const deadline = (myChallenge.created_at || Date.now() / 1000) * 1000 + 5000;
+                const tick = () => {
+                    const el = document.getElementById('challenge-countdown');
+                    if (!el) return;
+                    const secs = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+                    el.textContent = secs > 0
+                        ? `Wird in ${secs} Sek. automatisch angenommen…`
+                        : 'Wird angenommen…';
+                };
+                tick();
+                this._challengeCountdown = setInterval(tick, 250);
+            }
+
             modal.classList.add('active');
         } else {
+            if (this._challengeCountdown) { clearInterval(this._challengeCountdown); this._challengeCountdown = null; }
+
+            // If a challenge was pending and disappeared, check whether it was auto-accepted
+            // (game now exists) so we can navigate the target player directly into it.
+            if (this.activeReceivedChallenge) {
+                const gameId = `game_${this.activeReceivedChallenge.challenge_id}`;
+                if (this.gameState && this.gameState.active_games && this.gameState.active_games[gameId]) {
+                    this.enterActiveGameView(gameId);
+                }
+            }
+
             this.activeReceivedChallenge = null;
             modal.classList.remove('active');
         }
@@ -732,6 +782,12 @@ class FreyaApp {
     }
 
     exitActiveGameView() {
+        if (this.socket && this.socket.readyState === WebSocket.OPEN && this.activeGameSessionId) {
+            this.socket.send(JSON.stringify({
+                type: 'game_leave',
+                game_session_id: this.activeGameSessionId
+            }));
+        }
         if (this.currentGroupId) {
             this.navigate(`/group/${this.currentGroupId}`);
         }
@@ -813,8 +869,6 @@ class FreyaApp {
     renderCardDrawGame(gState) {
         const container = document.getElementById('game-container');
         container.innerHTML = '';
-        
-        const isMyTurn = gState.status === 'playing'; // Card draw is instant
         
         const board = document.createElement('div');
         board.className = 'carddraw-board';

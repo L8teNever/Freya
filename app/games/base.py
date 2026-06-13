@@ -19,6 +19,9 @@ class BaseGame(ABC):
         # the table vote on whether it is valid. Only one open dispute at a time.
         self.dispute: Optional[Dict[str, Any]] = None
 
+        # Tracks participants who explicitly clicked "Match verlassen".
+        self.left_players: List[Dict[str, str]] = []
+
     def deactivate_player(self, session_id: str) -> None:
         for p in self.players:
             if p["session_id"] == session_id:
@@ -30,6 +33,21 @@ class BaseGame(ABC):
             if p["session_id"] == session_id:
                 p["is_active"] = True
                 break
+
+    def mark_left(self, session_id: str) -> bool:
+        """Record that a participant explicitly left. Returns True if they were a participant."""
+        for p in self.players:
+            if p["session_id"] == session_id:
+                if not any(lp["session_id"] == session_id for lp in self.left_players):
+                    self.left_players.append({"session_id": session_id, "nickname": p["nickname"]})
+                return True
+        return False
+
+    def all_participants_left(self) -> bool:
+        if not self.players:
+            return False
+        left_ids = {lp["session_id"] for lp in self.left_players}
+        return all(p["session_id"] in left_ids for p in self.players)
 
     def add_participant(self, player: Dict[str, Any]) -> bool:
         """Allow a group member to join an in-progress lobby. Returns True if added.
